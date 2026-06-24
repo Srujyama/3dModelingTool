@@ -150,14 +150,27 @@ you crashed.
 
 #### kind = gui — a native UI set
 
-1. Build **real instances**, never images. Use `create_ui_tree` to author a
-   `ScreenGui → Frame → ImageLabel/TextLabel` hierarchy under `game.StarterGui`. Keep dynamic
-   text in separate `TextLabel`s (the whole point — editable, localizable).
-2. For common wired UIs (`hud/inventory/shop/quest_tracker/gacha/combat/round_status/
+1. Build **real instances**, never images — a `ScreenGui → Frame → ImageLabel/TextLabel`
+   hierarchy under `game.StarterGui`. Keep dynamic text in separate `TextLabel`s (the whole
+   point — editable, localizable).
+2. **Tool choice — verify availability first.** Some MCP server builds advertise
+   `create_ui_tree` but do not implement it (it returns *"Unknown endpoint:
+   /api/create-ui-tree"*). So:
+   - **Preferred:** try `create_ui_tree` (one call for the whole tree). If it errors with an
+     unknown-endpoint / not-implemented message, **fall back** immediately.
+   - **Fallback (always works):** build the tree with `create_object` per node (or
+     `mass_create_objects` for siblings), parenting by path. This is the verified-live path.
+     Encode structured properties as `{"UDim2":[sx,ox,sy,oy]}`, `{"UDim":[scale,offset]}`,
+     `{"Color3":[r,g,b]}` (0–1 floats). Example that works:
+     `create_object {className:"TextLabel", parent:"game.StarterGui.ShopUI.Panel",
+     name:"Title", properties:{Size:{UDim2:[1,0,0,44]}, Text:"Fantasy Shop",
+     TextColor3:{Color3:[0.93,0.91,0.84]}, Font:"GothamBold", TextSize:24,
+     BackgroundTransparency:1}}`.
+3. For common wired UIs (`hud/inventory/shop/quest_tracker/gacha/combat/round_status/
    leaderboard`) you may seed with `create_game_ui` then restyle to the prompt + style tokens.
-3. Apply the style profile's `ui` tokens (bg/panel/accent/text colors, corner radius, stroke).
+4. Apply the style profile's `ui` tokens (bg/panel/accent/text colors, corner radius, stroke).
    Use `UICorner`, `UIStroke`, `UIGradient`, `UIListLayout`/`UIPadding` for a polished result.
-4. Name everything clearly; group logically. Verify structure with `get_descendants`.
+5. Name everything clearly; group logically. Verify structure with `get_descendants`.
 
 #### kind = scene — a build / environment
 
