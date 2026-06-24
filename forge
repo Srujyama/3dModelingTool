@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""
+forge — model anything in Roblox Studio from a Claude Code session.
+
+A single self-contained tool. It auto-discovers the running robloxstudio MCP server,
+checks the Studio plugin is connected, and calls any MCP tool over HTTP — so Claude Code
+can build models/UIs in your open place without the native mcp__robloxstudio__ tools.
+
+USAGE
+  ./forge check                         # is Studio connected?
+  ./forge call <tool> '<json-args>'     # call any robloxstudio MCP tool
+  ./forge build <build.json>            # create_build + import_build (3D model), then verify
+  ./forge tree game.Workspace           # list descendants of a path
+  ./forge ls game.Workspace             # list direct children of a path
+  ./forge rm game.Workspace.Thing       # delete an instance
+
+EXAMPLES
+  ./forge ls game.Workspace
+  ./forge call create_object '{"className":"Part","parent":"game.Workspace","name":"Box","properties":{"Size":{"Vector3":[4,4,4]},"Position":{"Vector3":[0,10,0]},"Material":"Wood","BrickColor":"Brown"}}'
+  ./forge build my_model.json           # see "BUILD FILE FORMAT" below
+
+The tool prints clean JSON results (unwrapped from the MCP/SSE envelope) and exits non-zero
+on any error, so Claude Code can read the result and react.
+
+BUILD FILE FORMAT (for `forge build`)
+  {
+    "id": "misc/my_thing",            // library id: "<style>/<name>"
+    "style": "misc",                  // medieval|modern|nature|scifi|misc
+    "target": "game.Workspace",       // where to place it (default game.Workspace)
+    "position": [0, 5, 0],            // world offset (default [0,0,0])
+    "palette": { "wood": ["Brown","WoodPlanks"], "stone": ["Medium stone grey","Cobblestone"] },
+    "parts": [                        // [px,py,pz, sx,sy,sz, rx,ry,rz, paletteKey, shape?, transparency?]
+      [0,0,0, 4,0.3,4, 0,0,0, "wood"]
+    ]
+  }
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.request
+
+PORTS_TO_TRY = [int(os.environ["FORGE_PORT"])] if os.environ.get("FORGE_PORT") else [
+    58741, 58742, 58743, 44755, 3000, 8080
+]
+
+
+def _http(url, data=None, timeout=90, headers=None):
+    req = urllib.request.Request(url, data=data, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def discover_base():
+    """Find the MCP server port by probing /health for pluginConnected."""
+    if os.environ.get("FORGE_URL"):
+        base = os.environ["FORGE_URL"].rstrip("/").removesuffix("/mcp")
+        return base
+    for p in PORTS_TO_TRY:
+        base = f"http://localhost:{p}"
+        try:
+            h = _http(f"{base}/health", timeout=3)
+            d = json.loads(h)
+            if "robloxstudio" in d.get("service", "") or "pluginConnected" in d:
+                return base
+        except Exception:
+            continue
+    # Fall back: scan listening node ports via lsof.
+    try:
+        out = subprocess.run(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=5).stdout
+        for m in re.finditer(r":(\d+)\s+\(LISTEN\)", out):
+            base = f"http://localhost:{m.group(1)}"
+            try:
+                d = json.loads(_http(f"{base}/health", timeout=2))
+                if "pluginConnected" in d:
+                    return base
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def health(base):
+    return json.loads(_http(f"{base}/health", timeout=5))
+
+
+def mcp_call(base, tool, args):
+    """Call a tool via the MCP streamable-HTTP endpoint; return unwrapped result."""
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": tool, "arguments": args},
+    }).encode()
+    raw = _http(f"{base}/mcp", data=body, timeout=120, headers={
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    })
+    payload = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("data:"):
+            payload = line[5:].strip()
+    if not payload:
+        raise RuntimeError(f"no data in response: {raw[:300]}")
+    obj = json.loads(payload)
+    if "error" in obj:
+        raise RuntimeError(obj["error"].get("message", json.dumps(obj["error"])))
+    content = obj.get("result", {}).get("content")
+    if content:
+        text = content[0].get("text", "")
+        try:
+            return json.loads(text)
+        except Exception:
+            return text
+    return obj.get("result", {})
+
+
+def need_base():
+    base = discover_base()
+    if not base:
+        die("No robloxstudio MCP server found. Open Studio and start the MCP Server plugin.")
+    h = health(base)
+    if not h.get("pluginConnected"):
+        die(f"MCP server is up at {base} but the Studio plugin is NOT connected.\n"
+            f"   Open the MCP Server panel in Studio and click Connect, then retry.")
+    return base
+
+
+def out(x):
+    print(json.dumps(x, indent=2) if not isinstance(x, str) else x)
+
+
+def die(msg, code=1):
+    print(f"forge: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def cmd_check(_args):
+    base = discover_base()
+    if not base:
+        die("No MCP server found (is Studio open with the MCP Server plugin running?)")
+    h = health(base)
+    print(f"server   : {base}")
+    print(f"connected: {h.get('pluginConnected')}")
+    print(f"instances: {h.get('instanceCount')}")
+    if h.get("instances"):
+        print(f"role     : {h['instances'][0].get('role')}")
+    if not h.get("pluginConnected"):
+        die("plugin not connected — click Connect in the Studio MCP Server panel.")
+    print("ready ✓")
+
+
+def cmd_call(args):
+    if len(args) < 1:
+        die("usage: forge call <tool> '<json-args>'")
+    tool = args[0]
+    payload = json.loads(args[1]) if len(args) > 1 and args[1].strip() else {}
+    out(mcp_call(need_base(), tool, payload))
+
+
+def cmd_build(args):
+    if not args:
+        die("usage: forge build <build.json>")
+    with open(args[0]) as f:
+        spec = json.load(f)
+    base = need_base()
+    target = spec.get("target", "game.Workspace")
+    position = spec.get("position", [0, 0, 0])
+    # 1. create_build
+    cb = mcp_call(base, "create_build", {
+        "id": spec["id"], "style": spec.get("style", "misc"),
+        "palette": spec["palette"], "parts": spec["parts"],
+    })
+    if not (isinstance(cb, dict) and cb.get("success")):
+        die(f"create_build failed: {cb}")
+    print(f"✓ create_build: {cb.get('partCount')} parts, bounds {cb.get('bounds')}")
+    # 2. import_build
+    ib = mcp_call(base, "import_build", {
+        "buildData": spec["id"], "targetPath": target, "position": position,
+    })
+    if not (isinstance(ib, dict) and ib.get("success")):
+        die(f"import_build failed: {ib}")
+    print(f"✓ import_build: {ib.get('modelPath')} ({ib.get('partCount')} parts)")
+    # 3. verify
+    model_path = ib.get("modelPath")
+    desc = mcp_call(base, "get_descendants", {"instancePath": model_path, "classFilter": "BasePart"})
+    print(f"✓ verified: {desc.get('count')} parts live in {model_path}")
+
+
+def cmd_tree(args):
+    if not args:
+        die("usage: forge tree <path>")
+    out(mcp_call(need_base(), "get_descendants", {"instancePath": args[0]}))
+
+
+def cmd_ls(args):
+    if not args:
+        die("usage: forge ls <path>")
+    out(mcp_call(need_base(), "get_instance_children", {"instancePath": args[0]}))
+
+
+def cmd_rm(args):
+    if not args:
+        die("usage: forge rm <path>")
+    out(mcp_call(need_base(), "delete_object", {"instancePath": args[0]}))
+
+
+COMMANDS = {
+    "check": cmd_check, "call": cmd_call, "build": cmd_build,
+    "tree": cmd_tree, "ls": cmd_ls, "rm": cmd_rm,
+}
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
+        print(__doc__)
+        sys.exit(0)
+    cmd = sys.argv[1]
+    if cmd not in COMMANDS:
+        die(f"unknown command '{cmd}'. Try: {', '.join(COMMANDS)} (or --help)")
+    try:
+        COMMANDS[cmd](sys.argv[2:])
+    except RuntimeError as e:
+        die(str(e))
+    except FileNotFoundError as e:
+        die(f"file not found: {e.filename}")
+
+
+if __name__ == "__main__":
+    main()

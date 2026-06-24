@@ -1,0 +1,22 @@
+{
+  "id": "modern/pet_daycare_counter",
+  "style": "modern",
+  "target": "game.Workspace",
+  "position": [0, 0, 0],
+  "palette": {
+    "wood":  ["Brown", "WoodPlanks"],
+    "top":   ["Burlap", "Wood"],
+    "sign":  ["Bright blue", "SmoothPlastic"],
+    "post":  ["Dark stone grey", "Metal"]
+  },
+  "parts": [
+    [0, 3, 0,    8, 0.4, 3,   0,0,0, "top"],
+    [0, 1.4, 0,  7.6, 3, 2.6, 0,0,0, "wood"],
+    [0, 1.4, 1.2, 7.6, 3, 0.2, 0,0,0, "top"],
+    [-3.6, 0.2, 0, 0.4, 0.4, 2.6, 0,0,0, "post"],
+    [3.6, 0.2, 0,  0.4, 0.4, 2.6, 0,0,0, "post"],
+    [-3, 5, -1.2,  0.3, 4, 0.3, 0,0,0, "post"],
+    [3, 5, -1.2,   0.3, 4, 0.3, 0,0,0, "post"],
+    [0, 6.5, -1.2, 7, 1.6, 0.25, 0,0,0, "sign"]
+  ]
+}

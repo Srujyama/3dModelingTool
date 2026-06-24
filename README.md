@@ -38,7 +38,16 @@ The full mailbox protocol (race conditions, lifecycle, signals) is in
 
 ---
 
-## Install
+## Two ways to use it
+
+1. **The plugin** (chat panel inside Studio) — the full experience described below.
+2. **From Claude Code directly** — paste one snippet and model in your open Studio via the
+   `forge` CLI, no plugin install needed. See **[MODELING.md](MODELING.md)** — this is the
+   fastest way to start building.
+
+---
+
+## Install (the plugin)
 
 You need two pieces talking to the same Studio session:
 
