@@ -1,0 +1,11 @@
+# Built plugin artifact (regenerate: rojo build plugin.project.json --output Forge.rbxmx)
+Forge.rbxmx
+
+# Generated selene Roblox std (regenerate: selene generate-roblox-std)
+roblox.yml
+
+# Test harness scratch + generated source bundle (regenerate: tests/gen_sources.sh)
+tests/forge_sources.luau
+tests/_*.luau
+tests/*.bak
+tests/*.tmp

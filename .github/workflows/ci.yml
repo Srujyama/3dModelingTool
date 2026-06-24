@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rojo / selene / stylua (pinned via aftman.toml)
+        uses: ok-nick/setup-aftman@v0.4.2
+        with:
+          trust-check: false
+
+      - name: Install luau CLI
+        run: |
+          set -euo pipefail
+          curl -fsSL -o luau.zip \
+            https://github.com/luau-lang/luau/releases/latest/download/luau-ubuntu.zip
+          unzip -o luau.zip
+          chmod +x luau
+          sudo mv luau /usr/local/bin/luau
+          luau --version || true
+
+      - name: Generate selene Roblox std
+        run: selene generate-roblox-std
+
+      - name: Run the full test suite
+        run: |
+          set -euo pipefail
+          cd tests
+          chmod +x run.sh gen_sources.sh
+          ./run.sh

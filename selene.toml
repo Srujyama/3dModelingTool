@@ -1,0 +1,12 @@
+# Lint with: selene src/
+# First-time setup (generates roblox.yml, gitignored): selene generate-roblox-std
+std = "roblox"
+
+# `plugin` is a global injected by Studio into a plugin's main script.
+[lints]
+# We intentionally use _ prefixed "private" methods on classes; allow shadowing patterns
+# common in imperative UI code.
+shadowing = "warn"
+
+[config]
+empty_if = { comments_count = true }

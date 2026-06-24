@@ -1,0 +1,6 @@
+{
+  "name": "Forge",
+  "tree": {
+    "$path": "src"
+  }
+}

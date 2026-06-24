@@ -1,0 +1,12 @@
+{
+  "name": "Forge",
+  "tree": {
+    "$className": "DataModel",
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "ForgePlugin": {
+        "$path": "src"
+      }
+    }
+  }
+}
