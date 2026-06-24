@@ -13,8 +13,6 @@ jobs:
 
       - name: Install rojo / selene / stylua (pinned via aftman.toml)
         uses: ok-nick/setup-aftman@v0.4.2
-        with:
-          trust-check: false
 
       - name: Install luau CLI
         run: |
