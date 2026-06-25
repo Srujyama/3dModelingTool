@@ -9,3 +9,7 @@ tests/forge_sources.luau
 tests/_*.luau
 tests/*.bak
 tests/*.tmp
+
+# Python bytecode cache
+__pycache__/
+*.pyc

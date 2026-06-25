@@ -21,7 +21,17 @@ the robloxstudio MCP server. It auto-discovers the port and checks the connectio
 ./forge build <spec.json>           # build a 3D model: create_build + import_build + verify
 ./forge call <tool> '<json-args>'   # call ANY robloxstudio MCP tool directly
 ./forge rm game.Workspace.Thing     # delete an instance
+./forge shot [out.png] [width]      # capture the Studio viewport to a PNG (then Read it to SEE)
+./forge scene [rootPath]            # headless spatial summary (center/size/groundGap/tiltedParts)
 ```
+
+### See the map — never build blind
+Bounding boxes hide broken geometry (floating blobs, tilted walls, misaligned roofs). After a
+visual build, `./forge shot /tmp/s.png` then **Read** the PNG to actually look; and/or
+`./forge scene` for a headless check (large `groundGap` = floating; many `tiltedParts` = likely
+broken). `shot` needs Edit mode, the viewport visible, and *Game Settings > Security > Allow
+Mesh / Image APIs = ON*. Get one piece looking right before fanning out — don't mass-produce
+variants blind.
 
 ## How to fulfill "build me X" (a 3D model)
 

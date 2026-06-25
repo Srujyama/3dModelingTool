@@ -207,9 +207,159 @@ def cmd_rm(args):
     out(mcp_call(need_base(), "delete_object", {"instancePath": args[0]}))
 
 
+def _png_from_rgba(rgba_bytes, w, h):
+    """Pack a raw RGBA byte buffer into a real PNG (pure stdlib: zlib + chunks)."""
+    import struct, zlib
+    # PNG wants each scanline prefixed with a filter byte (0 = none).
+    stride = w * 4
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)
+        raw += rgba_bytes[y * stride:(y + 1) * stride]
+    def chunk(tag, data):
+        c = struct.pack(">I", len(data)) + tag + data
+        return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)  # 8-bit, RGBA
+    idat = zlib.compress(bytes(raw), 9)
+    return sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+# Capture the viewport, DOWNSCALE in-Studio to a target width, return small base64.
+# The full-res capture_screenshot tool returns ~17MB which the bridge drops; this
+# downscale path keeps the payload small enough to come back reliably.
+_SHOT_LUAU = r'''
+local TARGET_W = TARGETW
+local CaptureService = game:GetService("CaptureService")
+local AssetService = game:GetService("AssetService")
+local captured = nil
+CaptureService:CaptureScreenshot(function(id) captured = id end)
+local t0 = tick(); while captured == nil and tick()-t0 < 9 do task.wait(0.1) end
+if not captured then return game:GetService("HttpService"):JSONEncode({error="no contentId (viewport not visible / Play mode?)"}) end
+local okI, img = pcall(function() return AssetService:CreateEditableImageAsync(Content.fromUri(captured)) end)
+if not okI or not img then return game:GetService("HttpService"):JSONEncode({error="CreateEditableImageAsync failed - enable Game Settings > Security > Allow Mesh / Image APIs ("..tostring(img)..")"}) end
+local sz = img.Size
+local fullW, fullH = math.floor(sz.X), math.floor(sz.Y)
+local scale = math.min(1, TARGET_W / fullW)
+local w = math.max(1, math.floor(fullW * scale))
+local h = math.max(1, math.floor(fullH * scale))
+local small = AssetService:CreateEditableImage({ Size = Vector2.new(w, h) })
+small:DrawImageTransformed(Vector2.new(w/2, h/2), Vector2.new(scale, scale), 0, img, {})
+local buf = small:ReadPixelsBuffer(Vector2.new(0,0), Vector2.new(w,h))
+img:Destroy(); small:Destroy()
+local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+local out = {}
+local n = buffer.len(buf)
+local i = 0
+while i < n do
+  local b0 = buffer.readu8(buf, i)
+  local b1 = i+1 < n and buffer.readu8(buf, i+1) or 0
+  local b2 = i+2 < n and buffer.readu8(buf, i+2) or 0
+  local trip = b0*65536 + b1*256 + b2
+  out[#out+1] = B64:sub(math.floor(trip/262144)%64+1, math.floor(trip/262144)%64+1)
+    ..B64:sub(math.floor(trip/4096)%64+1, math.floor(trip/4096)%64+1)
+    ..((i+1<n) and B64:sub(math.floor(trip/64)%64+1, math.floor(trip/64)%64+1) or "=")
+    ..((i+2<n) and B64:sub(trip%64+1, trip%64+1) or "=")
+  i = i + 3
+end
+return game:GetService("HttpService"):JSONEncode({ w=w, h=h, data=table.concat(out) })
+'''
+
+
+def cmd_shot(args):
+    """forge shot [out.png] [width] — capture the Studio viewport and save a viewable PNG.
+    Downscales in-Studio (default width 900) so the image fits through the bridge."""
+    import base64, json as _j
+    dest = args[0] if args else "/tmp/forge_shot.png"
+    target_w = args[1] if len(args) > 1 else "900"
+    luau = _SHOT_LUAU.replace("TARGETW", str(int(target_w)))
+    res = mcp_call(need_base(), "execute_luau", {"code": luau})
+    val = res.get("returnValue") if isinstance(res, dict) else res
+    obj = None
+    if isinstance(val, str):
+        try:
+            obj = _j.loads(val)
+        except Exception:
+            pass
+    if not isinstance(obj, dict) or obj.get("error"):
+        msg = (obj or {}).get("error") if isinstance(obj, dict) else str(res)[:300]
+        die("capture failed: " + str(msg))
+    w, h = int(obj["w"]), int(obj["h"])
+    rgba = base64.b64decode(obj["data"])
+    if len(rgba) < w * h * 4:
+        die(f"pixel buffer too small: {len(rgba)} bytes for {w}x{h}")
+    png = _png_from_rgba(rgba, w, h)
+    with open(dest, "wb") as f:
+        f.write(png)
+    print(f"saved {dest}  ({w}x{h}, {len(png)} bytes)")
+
+
+def cmd_scene(args):
+    """forge scene [rootPath] — a headless SPATIAL SUMMARY of the scene: every model's
+    world bounds/center/size/orientation + flags for floating / overlapping / tilted parts,
+    so the map can be understood without pixels. Runs Luau in Studio and prints JSON."""
+    root = args[0] if args else "game.Workspace"
+    luau = r'''
+local root = ROOTEXPR
+local function round(n) return math.floor(n*10+0.5)/10 end
+local out = {}
+local function summarize(model)
+  local ok, cf, size = pcall(function() return model:GetBoundingBox() end)
+  if not ok then return nil end
+  local parts, floating, tilted, mats = 0, 0, 0, {}
+  local minY = math.huge
+  for _, d in ipairs(model:GetDescendants()) do
+    if d:IsA("BasePart") then
+      parts = parts + 1
+      minY = math.min(minY, d.Position.Y - d.Size.Y/2)
+      mats[tostring(d.Material)] = (mats[tostring(d.Material)] or 0) + 1
+      -- tilted = not axis-aligned (any meaningful rotation away from 0/90)
+      local rx, ry, rz = d.CFrame:ToOrientation()
+      local function odd(a) local d2=math.abs(math.deg(a))%90; return math.min(d2,90-d2)>8 end
+      if odd(rx) or odd(rz) then tilted = tilted + 1 end
+    end
+  end
+  if parts == 0 then return nil end
+  local matList = {}
+  for m,c in pairs(mats) do table.insert(matList, m..":"..c) end
+  return {
+    name = model.Name, parts = parts,
+    center = {round(cf.X), round(cf.Y), round(cf.Z)},
+    size = {round(size.X), round(size.Y), round(size.Z)},
+    groundGap = round(minY),                 -- how far the lowest part floats above y=0
+    tiltedParts = tilted,                    -- parts rotated off-axis (often a sign of broken geo)
+    materials = matList,
+  }
+end
+for _, child in ipairs(root:GetChildren()) do
+  if child:IsA("Model") or child:IsA("Folder") then
+    if child:IsA("Folder") then
+      for _, g in ipairs(child:GetChildren()) do
+        if g:IsA("Model") then local s=summarize(g); if s then table.insert(out,s) end end
+      end
+    else
+      local s = summarize(child); if s then table.insert(out, s) end
+    end
+  end
+end
+return game:GetService("HttpService"):JSONEncode(out)
+'''.replace("ROOTEXPR", root)
+    res = mcp_call(need_base(), "execute_luau", {"code": luau})
+    val = res.get("returnValue") if isinstance(res, dict) else res
+    if isinstance(val, str):
+        try:
+            import json as _j
+            print(_j.dumps(_j.loads(val), indent=2))
+            return
+        except Exception:
+            pass
+    out(res)
+
+
 COMMANDS = {
     "check": cmd_check, "call": cmd_call, "build": cmd_build,
     "tree": cmd_tree, "ls": cmd_ls, "rm": cmd_rm,
+    "shot": cmd_shot, "scene": cmd_scene,
 }
 
 

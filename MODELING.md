@@ -55,9 +55,18 @@ Claude Code writes a spec, runs `./forge build`, verifies it, and tells you wher
 ./forge ls game.Workspace                       # list children
 ./forge tree game.Workspace.MyModel             # list all descendants
 ./forge build daycare_counter.json              # build a model from a spec file
+./forge shot /tmp/s.png                         # capture the viewport to a PNG (then look at it)
+./forge scene game.Workspace                    # headless spatial summary of the scene
 ./forge call create_object '{"className":"Part","parent":"game.Workspace","name":"Box","properties":{"Size":{"Vector3":[4,4,4]},"Position":{"Vector3":[0,10,0]},"Material":"Wood","BrickColor":"Brown"}}'
 ./forge rm game.Workspace.Box                   # delete
 ```
+
+### Seeing your build
+
+`./forge shot out.png` saves a real screenshot of the Studio viewport — open it (or have Claude
+read it) to actually see what got built. `./forge scene` gives a headless summary (each model's
+position, size, how far it floats off the ground, tilted parts) when you just want a sanity
+check. `shot` needs *Game Settings → Security → Allow Mesh / Image APIs* enabled and Edit mode.
 
 ## Notes
 
